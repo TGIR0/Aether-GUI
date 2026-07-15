@@ -25,7 +25,7 @@ impl PtySession {
     }
 
     pub fn prompts_done(&self) -> bool {
-        self.prompts_done.load(Ordering::Relaxed)
+        self.prompts_done.load(Ordering::Acquire)
     }
 
     pub fn try_wait(&mut self) -> Option<portable_pty::ExitStatus> {
@@ -44,6 +44,7 @@ impl PtySession {
 
     pub fn kill(&mut self) {
         let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -139,7 +140,7 @@ fn read_loop(
                 }
             }
             if line.contains("hunting for a working") {
-                prompts_done.store(true, Ordering::Relaxed);
+                prompts_done.store(true, Ordering::Release);
             }
             let _ = log_tx.send(LogEvent { line, timestamp: now_millis() });
         }
@@ -160,7 +161,7 @@ fn read_loop(
                         }
                         answered.insert(section);
                         if answered.len() == PROMPT_TABLE.len() {
-                            prompts_done.store(true, Ordering::Relaxed);
+                            prompts_done.store(true, Ordering::Release);
                         }
                     }
                 }

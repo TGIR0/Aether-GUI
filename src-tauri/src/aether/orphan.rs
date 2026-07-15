@@ -50,9 +50,9 @@ fn kill_pid(pid: u32) {
 #[cfg(windows)]
 fn is_alive(pid: u32) -> bool {
     std::process::Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {pid}")])
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("aether.exe"))
         .unwrap_or(false)
 }
 
