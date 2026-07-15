@@ -309,21 +309,52 @@ fn monitor_connect(
         }
 
         if status::port_is_live() {
-            let new_state = ConnectionState::Connected {
-                socks_addr: format!("127.0.0.1:{}", status::SOCKS_PORT),
-                connected_at_ms: now_millis(),
-            };
-            mgr.state = new_state.clone();
-            // Proven working — a future drop earns a fresh full retry budget
-            // rather than inheriting whatever it took to get here.
-            mgr.retry_count = 0;
-            drop(mgr);
-            let _ = app.emit(STATUS_EVENT, &new_state);
-            // Only persisted as "last successful" once actually proven to
-            // work, never on a mere attempt (see profiles::save's doc-comment).
-            profiles::save(&app, &profile);
-            monitor_connected(app, manager, binary, data_dir, profile);
-            return;
+            drop(mgr); // Don't hold the lock during the blocking HTTP request
+            match status::verify_connection() {
+                status::VerifyResult::Ok => {
+                    let mut mgr = manager.lock().unwrap();
+                    if mgr.user_requested_stop {
+                        return;
+                    }
+                    let new_state = ConnectionState::Connected {
+                        socks_addr: format!("127.0.0.1:{}", status::SOCKS_PORT),
+                        connected_at_ms: now_millis(),
+                    };
+                    mgr.state = new_state.clone();
+                    mgr.retry_count = 0;
+                    drop(mgr);
+                    let _ = app.emit(STATUS_EVENT, &new_state);
+                    profiles::save(&app, &profile);
+                    monitor_connected(app, manager, binary, data_dir, profile);
+                    return;
+                }
+                status::VerifyResult::BadRoute => {
+                    let mut mgr = manager.lock().unwrap();
+                    if mgr.user_requested_stop {
+                        return;
+                    }
+                    if let Some(session) = mgr.session.as_mut() {
+                        session.kill();
+                        let _ = session.try_wait(); // Reap if possible
+                    }
+                    mgr.session = None;
+                    drop(mgr);
+                    handle_unexpected_failure(
+                        app,
+                        manager,
+                        binary,
+                        data_dir,
+                        profile,
+                        "Assigned IP was strictly blocked (Iranian IP detected)".into(),
+                        "connecting",
+                    );
+                    return;
+                }
+                status::VerifyResult::Failed => {
+                    // Tunnel not ready yet or network error, let the loop continue
+                    continue;
+                }
+            }
         }
 
         if Instant::now() >= deadline {

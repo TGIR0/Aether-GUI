@@ -16,6 +16,40 @@ pub fn port_is_live() -> bool {
     TcpStream::connect_timeout(&socks_addr(), Duration::from_millis(300)).is_ok()
 }
 
+pub enum VerifyResult {
+    Ok,
+    BadRoute,
+    Failed,
+}
+
+pub fn verify_connection() -> VerifyResult {
+    let proxy_url = format!("socks5://127.0.0.1:{}", SOCKS_PORT);
+    let proxy = match ureq::Proxy::new(&proxy_url) {
+        Ok(p) => p,
+        Err(_) => return VerifyResult::Failed,
+    };
+    
+    let agent = ureq::AgentBuilder::new()
+        .proxy(proxy)
+        .timeout_connect(Duration::from_millis(1500))
+        .timeout_read(Duration::from_millis(1500))
+        .timeout_write(Duration::from_millis(1500))
+        .build();
+
+    match agent.get("https://1.1.1.1/cdn-cgi/trace").call() {
+        Ok(response) => {
+            if let Ok(body) = response.into_string() {
+                if body.contains("loc=IR") {
+                    return VerifyResult::BadRoute;
+                }
+                return VerifyResult::Ok;
+            }
+            VerifyResult::Failed
+        }
+        Err(_) => VerifyResult::Failed,
+    }
+}
+
 /// Empirically (manually running v1.0.1 to completion), Aether's own route-
 /// discovery budget goes up to 120s for MASQUE and 80s for WireGuard (its
 /// own "budget=..." log line). The GUI's connect timeout must exceed both,
